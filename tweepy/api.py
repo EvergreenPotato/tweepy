@@ -7,6 +7,8 @@ from __future__ import print_function
 import os
 import mimetypes
 
+import time
+
 import six
 
 if six.PY2:
@@ -293,7 +295,7 @@ class API(object):
             kwargs = {'headers': headers, 'post_data': post_data}
 
             # The FINALIZE command returns media information
-            return bind_api(
+            finalize_info = bind_api(
                 api=self,
                 path='/media/upload.json',
                 method='POST',
@@ -302,6 +304,30 @@ class API(object):
                 require_auth=True,
                 upload_api=True
             )(*args, **kwargs)
+
+            if hasattr(finalize_info, 'processing_info'):
+                processing_info = finalize_info.processing_info
+                # Check status
+                for i in range(0, 10):
+                    processing_state = processing_info['state']
+
+                    if processing_state == 'succeeded' or processing_state == 'failed':
+                        break
+
+                    check_after_secs = processing_info['check_after_secs']
+                    time.sleep(check_after_secs)
+
+                    status_info = bind_api(
+                        api=self,
+                        path='/media/upload.json',
+                        allowed_param=['media_id', 'command'],
+                        payload_type='json',
+                        require_auth=True,
+                        upload_api=True
+                    )(media_id=media_info.media_id, command='STATUS')
+                    processing_info = status_info['processing_info']
+
+            return finalize_info
         else:
             return media_info
 
@@ -1481,12 +1507,16 @@ class API(object):
         BOUNDARY = b'Tw3ePy'
         body = list()
         if command == 'init':
-            body.append(
-                urlencode({
+            req_params = {
                     'command': 'INIT',
                     'media_type': file_type,
                     'total_bytes': file_size
-                }).encode('utf-8')
+                }
+            if 'video' in file_type:
+                req_params['media_category'] = 'tweet_video'
+
+            body.append(
+                urlencode(req_params).encode('utf-8')
             )
             headers = {
                 'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8'
@@ -1527,6 +1557,7 @@ class API(object):
             headers = {
                 'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8'
             }
+
 
         body = b'\r\n'.join(body)
         # build headers
